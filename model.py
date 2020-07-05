@@ -3,8 +3,9 @@ import csv
 
 
 # read csv file and put into a list
+data_folder = './data/'
 samples = []
-with open('/opt/carnd_p3/data/driving_log.csv') as csvfile:
+with open(data_folder + 'driving_log.csv') as csvfile:
 	reader = csv.reader(csvfile)
 	next(reader, None)
 	for line in reader:
@@ -19,32 +20,46 @@ import numpy as np
 import sklearn
 from sklearn.utils import shuffle
 
+angle_correction = 0.2
 
 # data generator
 def generator(samples, batch_size=32):
 	num_samples = len(samples)
 	while 1: # Loop forever so the generator never terminates
 		shuffle(samples)
-		half_batch_size = int(batch_size / 2) # use half size cause we are adding flipped data into batch too
-		for offset in range(0, num_samples, half_batch_size):
-			batch_samples = samples[offset : offset+half_batch_size]
+		for offset in range(0, num_samples, batch_size):
+			batch_samples = samples[offset : offset+batch_size]
 
 			images = []
 			angles = []
 			for batch_sample in batch_samples:
-				name = '/opt/carnd_p3/data/IMG/'+batch_sample[0].split('/')[-1]
-				center_image = cv2.imread(name)
-				center_angle = float(batch_sample[3]) # str to float
-				images.append(center_image)
-				angles.append(center_angle)
-				# data augmentation by flipping images and steering measurements
-				images.append(np.fliplr(center_image))
-				angles.append(0-center_angle)
+				for i in range(3): # add center, left, right images
+					img_name = data_folder + 'IMG/' + batch_sample[i].split('/')[-1]
+					image = cv2.cvtColor(cv2.imread(img_name), cv2.COLOR_BGR2RGB)
+					images.append(image)
+					
+					center_angle = float(batch_sample[3]) # str to float
+					# +/- correction for left/right camera
+					if (i == 0):
+						angles.append(center_angle)
+					elif (i == 1):
+						angles.append(center_angle + angle_correction)
+					else:
+						angles.append(center_angle - angle_correction)
 
-			# trim image to only see section with road
+					# data augmentation by flipping image
+					images.append(np.fliplr(image))
+					# +/- correction for left/right camera, then flip
+					if (i == 0):
+						angles.append(center_angle * -1)
+					elif (i == 1):
+						angles.append((center_angle + angle_correction) * -1)
+					else:
+						angles.append((center_angle - angle_correction) * -1)
+
 			X_train = np.array(images)
 			y_train = np.array(angles)
-			yield sklearn.utils.shuffle(X_train, y_train)
+			yield shuffle(X_train, y_train)
 
 # Set our batch size
 batch_size = 32
@@ -56,7 +71,7 @@ validation_generator = generator(validation_samples, batch_size=batch_size)
 
 input_shape = (160, 320, 3) # Original image format
 row, col, ch = 80, 320, 3 # Trimmed image format
-
+keep_prob = 0.5
 
 from keras.models import Sequential
 from keras.layers import Lambda, Cropping2D, Flatten, Dense, Activation, Dropout
@@ -74,9 +89,10 @@ model.add(Conv2D(48, kernel_size=(5,5), strides=(2,2), activation='relu'))
 model.add(Conv2D(64, kernel_size=(3,3), activation='relu'))
 model.add(Conv2D(64, kernel_size=(3,3), activation='relu'))
 model.add(Flatten())
-model.add(Dense(100))
-model.add(Dense(50))
-model.add(Dense(10))
+model.add(Dense(100, activation='relu'))
+model.add(Dropout(keep_prob)) # add Dropout layer to reduce overfitting
+model.add(Dense(50, activation='relu'))
+model.add(Dense(10, activation='relu'))
 model.add(Dense(1))
 
 from math import ceil
@@ -89,12 +105,11 @@ history_object = model.fit_generator(train_generator,
 			epochs=5, verbose=1)
 
 model.save('model.h5')
+print('Model Saved.')
+model.summary()
 
 
 import matplotlib.pyplot as plt
-
-### print the keys contained in the history object
-print(history_object.history.keys())
 
 ### plot the training and validation loss for each epoch
 plt.plot(history_object.history['loss'])
@@ -103,4 +118,4 @@ plt.title('model mean squared error loss')
 plt.ylabel('mean squared error loss')
 plt.xlabel('epoch')
 plt.legend(['training set', 'validation set'], loc='upper right')
-plt.show()
+plt.savefig('error_plot.jpg', dpi=400)
